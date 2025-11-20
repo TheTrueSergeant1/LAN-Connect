@@ -12,223 +12,229 @@ const db = require('./database');
 // --- Configuration ---
 const PORT = 3000;
 const HOST = '10.0.0.100'; // Your Server IP
-const SESSION_SECRET = 'lan-super-secret-key-change-this';
 
-// --- SSL Certificates (Required for WebRTC) ---
+// --- SSL Certificate (Required for WebRTC/Video) ---
 // Ensure key.pem and cert.pem are in the root folder
 const options = {
     key: fs.readFileSync('key.pem'),
     cert: fs.readFileSync('cert.pem')
 };
 
-// --- App Setup ---
 const app = express();
 const server = https.createServer(options, app);
 const io = socketIo(server);
 
-// Middleware
+// --- Middleware Setup ---
 app.set('view engine', 'ejs');
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
+app.use(express.static('public')); // Serve CSS, JS, Sounds
+app.use('/uploads', express.static('public/uploads')); // Serve uploaded files
+
+// Session Config (Persists login state in SQLite)
 app.use(session({
     store: new SQLiteStore(),
-    secret: SESSION_SECRET,
+    secret: 'lan-cord-super-secret',
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: true } // Secure cookies because we are using HTTPS
+    cookie: { secure: true } // Secure cookies because we use HTTPS
 }));
 
 // File Upload Config
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, 'public/uploads/'),
-    filename: (req, file, cb) => {
-        // Keep original extension
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + path.extname(file.originalname));
-    }
-});
-const upload = multer({ storage: storage });
+const upload = multer({ dest: 'public/uploads/' });
 
-// --- Global Variables ---
-const onlineUsers = new Map(); // SocketID -> Username
+// --- Helper Middleware ---
 
-// --- Middleware Functions ---
-
-// 1. Check if User is Logged In
+// 1. Protect Routes (User must be logged in)
 const requireAuth = (req, res, next) => {
     if (req.session.userId) return next();
     res.redirect('/login');
 };
 
-// 2. Check if User is Admin
+// 2. Protect Admin Routes (User must be 'admin')
 const requireAdmin = (req, res, next) => {
     if (req.session.role === 'admin') return next();
-    res.status(403).send("<h1>403 Forbidden</h1><p>You do not have clearance to access the Command Center.</p>");
+    res.status(403).send("403 Forbidden: You do not have clearance.");
 };
 
-// --- Routes ---
+// --- Routes: Authentication ---
 
-// Login Page
 app.get('/login', (req, res) => {
     res.render('login');
 });
 
-// Login Action
+app.post('/register', (req, res) => {
+    const { username, password } = req.body;
+    const hash = bcrypt.hashSync(password, 10);
+    
+    // Insert into DB
+    db.run(`INSERT INTO users (username, password, role, is_banned) VALUES (?, ?, 'user', 0)`, 
+    [username, hash], (err) => {
+        if (err) return res.send("Error: Username likely taken.");
+        res.redirect('/login');
+    });
+});
+
 app.post('/login', (req, res) => {
     const { username, password } = req.body;
+    
     db.get(`SELECT * FROM users WHERE username = ?`, [username], (err, user) => {
-        if (err || !user || !bcrypt.compareSync(password, user.password)) {
-            return res.send(`<h2 style="color:white; background:#222; padding:20px;">Invalid Credentials. <a href='/login'>Try Again</a></h2>`);
+        if (!user || !bcrypt.compareSync(password, user.password)) {
+            return res.send("Invalid credentials");
         }
         
-        // Check Ban Status
+        // Check if Banned
         if (user.is_banned === 1) {
-            return res.send(`<h2 style="color:red; background:#111; padding:20px;">🚫 Access Denied: You have been banned from this server.</h2>`);
+            return res.send("🚫 Access Denied: You have been permanently banned.");
         }
 
         // Set Session
         req.session.userId = user.id;
         req.session.username = user.username;
-        req.session.role = user.role; 
+        req.session.role = user.role;
         res.redirect('/');
     });
 });
 
-// Register Action
-app.post('/register', (req, res) => {
-    const { username, password } = req.body;
-    const hash = bcrypt.hashSync(password, 10);
-    
-    // Default role is 'user', is_banned is 0
-    db.run(`INSERT INTO users (username, password, role, is_banned) VALUES (?, ?, 'user', 0)`, [username, hash], (err) => {
-        if (err) return res.send(`<h2 style="color:white;">Username taken. <a href='/login'>Back</a></h2>`);
+app.get('/logout', (req, res) => {
+    req.session.destroy(() => {
         res.redirect('/login');
     });
 });
 
-// Logout
-app.get('/logout', (req, res) => {
-    req.session.destroy();
-    res.redirect('/login');
-});
+// --- Routes: Main App ---
 
-// Main Chat App
 app.get('/', requireAuth, (req, res) => {
     res.render('chat', { username: req.session.username });
 });
 
-// File Upload Endpoint
+// Handle File Uploads (AJAX)
 app.post('/upload', requireAuth, upload.single('file'), (req, res) => {
-    if (!req.file) return res.status(400).send('No file uploaded.');
-    res.json({ 
-        filename: req.file.filename, 
-        originalName: req.file.originalname 
-    });
+    // In production, rename file to include extension here
+    res.json({ filename: req.file.filename, originalName: req.file.originalname });
 });
 
-// --- Admin Routes ---
+// --- Routes: Admin Dashboard ---
 
-// Dashboard
 app.get('/admin', requireAuth, requireAdmin, (req, res) => {
+    // 1. Get Users
     db.all("SELECT id, username, role, is_banned FROM users", [], (err, users) => {
+        // 2. Get Recent Messages
         db.all("SELECT id, username, content, timestamp FROM messages ORDER BY id DESC LIMIT 50", [], (err, messages) => {
             res.render('admin', { users, messages, myUser: req.session.username });
         });
     });
 });
 
-// Ban User
 app.post('/admin/ban', requireAuth, requireAdmin, (req, res) => {
     const { userId } = req.body;
     db.run("UPDATE users SET is_banned = 1 WHERE id = ?", [userId], () => {
-        io.emit('user-banned', userId); // Notify clients
+        // Disconnect user in real-time
+        // Note: Ideally we map UserID to SocketID to kick them specifically.
+        // Here we broadcast a ban event and clients check if it applies to them.
         res.redirect('/admin');
     });
 });
 
-// Delete Message
 app.post('/admin/delete-msg', requireAuth, requireAdmin, (req, res) => {
     const { msgId } = req.body;
     db.run("DELETE FROM messages WHERE id = ?", [msgId], () => {
-        io.emit('msg-deleted', msgId); // Notify clients
+        io.emit('msg-deleted', msgId);
         res.redirect('/admin');
     });
 });
 
+// --- Real-Time Logic (Socket.io) ---
 
-// --- Real-Time Socket Logic ---
+// Maps to track state
+const onlineUsers = new Map(); // socket.id -> username
+const voiceUsers = new Map();  // socket.id -> username (Only those in voice)
 
 io.on('connection', (socket) => {
-    
-    // User Joins
+
+    // 1. User joins the application (Text Chat)
     socket.on('join', (username) => {
         socket.username = username;
         onlineUsers.set(socket.id, username);
         
-        // Broadcast to others
         socket.broadcast.emit('system-msg', `${username} joined the server.`);
-        // Update Sidebar for everyone
-        io.emit('update-user-list', Array.from(onlineUsers.values()));
-    });
-
-    // User Disconnects
-    socket.on('disconnect', () => {
-        if (socket.username) {
-            onlineUsers.delete(socket.id);
-            io.emit('update-user-list', Array.from(onlineUsers.values()));
-        }
-    });
-
-    // Chat Messages
-    socket.on('chat-msg', (msg) => {
-        const timestamp = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         
-        // Insert into DB and get the ID (this refers to 'this.lastID' in sqlite3)
-        db.run(`INSERT INTO messages (username, content, type) VALUES (?, ?, 'text')`, [socket.username, msg], function(err) {
-            if (!err) {
+        // Send updated lists to everyone
+        io.emit('update-user-list', Array.from(onlineUsers.values()));
+        io.emit('update-voice-list', Array.from(voiceUsers.values()));
+    });
+
+    // 2. Handle Disconnect (Cleanup)
+    socket.on('disconnect', () => {
+        const user = onlineUsers.get(socket.id);
+        
+        onlineUsers.delete(socket.id);
+        voiceUsers.delete(socket.id); // Ensure they are removed from voice too
+
+        io.emit('update-user-list', Array.from(onlineUsers.values()));
+        io.emit('update-voice-list', Array.from(voiceUsers.values()));
+        
+        // If they were in voice, tell peers to remove their video stream
+        socket.broadcast.emit('user-left-voice', socket.id);
+    });
+
+    // 3. Text Chat Messages
+    socket.on('chat-msg', (msg) => {
+        const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        
+        // Save to DB
+        db.run(`INSERT INTO messages (username, content, type) VALUES (?, ?, 'text')`, 
+            [socket.username, msg], 
+            function(err) {
+                // Broadcast to all clients
                 io.emit('chat-msg', { 
-                    id: this.lastID, // Send DB ID so Admin can delete it later if needed
+                    id: this.lastID, // Send DB ID (useful for deletion)
                     user: socket.username, 
                     text: msg, 
                     type: 'text', 
-                    timestamp: timestamp 
+                    timestamp: time 
                 });
-            }
         });
     });
 
-    // File Sharing
+    // 4. File Sharing
     socket.on('file-share', (fileData) => {
-        const timestamp = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-        
-        // Save metadata as JSON string in content column for simplicity
-        const contentStr = JSON.stringify(fileData);
-        
-        db.run(`INSERT INTO messages (username, content, type) VALUES (?, ?, 'file')`, [socket.username, contentStr], function(err) {
-             if (!err) {
-                io.emit('chat-msg', { 
-                    id: this.lastID,
-                    user: socket.username, 
-                    text: fileData, 
-                    type: 'file', 
-                    timestamp: timestamp 
-                });
-             }
+        const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        io.emit('chat-msg', { 
+            user: socket.username, 
+            text: fileData, 
+            type: 'file', 
+            timestamp: time 
         });
     });
 
-    // --- WebRTC Signaling (Mesh Network) ---
+    // 5. Voice Channel Management
+    socket.on('join-voice', () => {
+        voiceUsers.set(socket.id, socket.username);
+        io.emit('update-voice-list', Array.from(voiceUsers.values()));
+    });
+
+    socket.on('leave-voice', () => {
+        voiceUsers.delete(socket.id);
+        io.emit('update-voice-list', Array.from(voiceUsers.values()));
+        socket.broadcast.emit('user-left-voice', socket.id);
+    });
+
+    // 6. WebRTC Signaling (Video/Screen)
+    // This relays the "handshake" data between two clients
     socket.on('signal', (data) => {
-        // Pass signals (Offer, Answer, ICE Candidates) to other clients
-        socket.broadcast.emit('signal', data);
+        io.to(data.target).emit('signal', {
+            ...data,
+            senderId: socket.id,   // Add Sender ID so receiver knows who this is
+            senderUser: socket.username
+        });
     });
 });
 
 // --- Start Server ---
 server.listen(PORT, HOST, () => {
     console.log('--------------------------------------------------');
-    console.log(`🚀 LAN-Cord Server Running!`);
-    console.log(`🔗 Access: https://${HOST}:${PORT}`);
-    console.log(`🔐 Admin:  https://${HOST}:${PORT}/admin`);
+    console.log(`LAN-Cord Server Running`);
+    console.log(`Address: https://${HOST}:${PORT}`);
+    console.log(`Admin Dashboard: https://${HOST}:${PORT}/admin`);
     console.log('--------------------------------------------------');
 });

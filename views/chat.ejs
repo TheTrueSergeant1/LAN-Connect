@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>LAN-Cord Premium</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;800&display=swap" rel="stylesheet">
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
+
+    <style>
+        :root {
+            --bg-dark: #050507;
+            --glass-surface: rgba(20, 20, 25, 0.65);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --accent-glow: 0 0 20px rgba(118, 75, 162, 0.5);
+            --text-main: #ffffff;
+            --text-muted: #a0a0b0;
+            --anim-speed: 0.4s;
+            --anim-curve: cubic-bezier(0.2, 0.8, 0.2, 1); /* The "iOS" feel */
+        }
+
+        * { box-sizing: border-box; outline: none; }
+        
+        body {
+            margin: 0;
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-dark);
+            /* Subtle animated background mesh */
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(118, 75, 162, 0.15), transparent 25%), 
+                radial-gradient(circle at 85% 30%, rgba(102, 126, 234, 0.15), transparent 25%);
+            color: var(--text-main);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* --- The Main Glass Container --- */
+        #app-container {
+            width: 95vw;
+            height: 92vh;
+            display: flex;
+            background: var(--glass-surface);
+            backdrop-filter: blur(24px) saturate(180%);
+            -webkit-backdrop-filter: blur(24px) saturate(180%);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+            animation: scaleIn 0.8s var(--anim-curve);
+        }
+
+        /* --- Sidebar --- */
+        #sidebar {
+            width: 260px;
+            background: rgba(0,0,0,0.2);
+            border-right: 1px solid var(--glass-border);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 800;
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 30px;
+            letter-spacing: -1px;
+        }
+
+        .section-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 1.5px;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+
+        #user-list {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .user-card {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            border-radius: 12px;
+            margin-bottom: 5px;
+            transition: all 0.2s ease;
+            cursor: default;
+        }
+        .user-card:hover { background: rgba(255,255,255,0.05); }
+        
+        .avatar {
+            width: 32px; height: 32px;
+            border-radius: 50%;
+            background: var(--primary-gradient);
+            margin-right: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold; font-size: 12px;
+            color: white;
+        }
+
+        .status-dot {
+            width: 8px; height: 8px;
+            background: #43b581;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #43b581;
+        }
+
+        /* --- Main Chat Area --- */
+        #main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        /* Video Grid (Floating overlay) */
+        #video-grid {
+            display: flex;
+            gap: 10px;
+            padding: 10px;
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 10;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            pointer-events: none; /* Let clicks pass through to chat unless on video */
+        }
+        #video-grid video { pointer-events: auto; }
+
+        video {
+            width: 180px;
+            border-radius: 16px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            border: 2px solid rgba(255,255,255,0.1);
+            animation: popIn 0.5s var(--anim-curve);
+            background: #000;
+        }
+
+        #messages {
+            flex: 1;
+            padding: 20px 40px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            scroll-behavior: smooth;
+        }
+
+        /* Message Bubbles */
+        .msg-container {
+            display: flex;
+            flex-direction: column;
+            max-width: 70%;
+            animation: slideUp 0.4s var(--anim-curve) forwards;
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        .msg-header {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+            margin-left: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .msg-bubble {
+            background: rgba(255,255,255,0.05);
+            padding: 12px 18px;
+            border-radius: 18px;
+            border-top-left-radius: 4px;
+            line-height: 1.5;
+            font-size: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            word-wrap: break-word;
+        }
+
+        .self-msg {
+            align-self: flex-end;
+        }
+        .self-msg .msg-header { justify-content: flex-end; margin-right: 12px; }
+        .self-msg .msg-bubble {
+            background: var(--primary-gradient);
+            border-top-left-radius: 18px;
+            border-top-right-radius: 4px;
+            box-shadow: var(--accent-glow);
+        }
+        
+        /* System Messages (Joins/Leaves) */
+        .system-msg {
+            align-self: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            background: rgba(255,255,255,0.05);
+            padding: 5px 15px;
+            border-radius: 20px;
+            margin: 10px 0;
+        }
+
+        /* --- Controls (Bottom Bar) --- */
+        #input-area {
+            padding: 25px 40px;
+            background: rgba(0,0,0,0.2);
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .control-btn {
+            background: rgba(255,255,255,0.1);
+            border: none;
+            width: 45px; height: 45px;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s var(--anim-curve);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px;
+        }
+        .control-btn:hover { transform: scale(1.1) rotate(5deg); background: white; color: black; }
+
+        #msgInput {
+            flex: 1;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--glass-border);
+            padding: 15px 25px;
+            border-radius: 50px;
+            color: white;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        #msgInput:focus { background: rgba(0,0,0,0.5); border-color: #764ba2; box-shadow: 0 0 15px rgba(118, 75, 162, 0.3); }
+
+        .send-btn {
+            background: var(--primary-gradient);
+            width: 50px; height: 50px;
+            border-radius: 50%;
+            border: none;
+            color: white;
+            cursor: pointer;
+            transition: transform 0.2s var(--anim-curve);
+            box-shadow: var(--accent-glow);
+            font-size: 18px;
+        }
+        .send-btn:active { transform: scale(0.9); }
+
+        /* --- Animations --- */
+        @keyframes slideUp { to { opacity: 1; transform: translateY(0); } }
+        @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        @keyframes popIn { from { transform: scale(0); } to { transform: scale(1); } }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+    </style>
+</head>
+<body>
+
+<div id="app-container">
+    <div id="sidebar">
+        <div class="logo">LAN-Cord</div>
+        
+        <div class="section-title">Voice & Video</div>
+        <div style="display: flex; gap: 10px; margin-bottom: 30px;">
+            <button class="control-btn" onclick="startVideo()" title="Start Camera">🎥</button>
+            <button class="control-btn" onclick="startScreen()" title="Share Screen">💻</button>
+        </div>
+
+        <div class="section-title">Online Users</div>
+        <div id="user-list">
+            </div>
+        
+        <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid var(--glass-border);">
+            <div class="user-card">
+                <div class="avatar"><%= username.charAt(0).toUpperCase() %></div>
+                <div style="flex: 1;">
+                    <div style="font-weight: 600; font-size: 14px;"><%= username %></div>
+                    <div style="font-size: 10px; color: #aaa;">Online</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="main">
+        <div id="video-grid"></div>
+        
+        <div id="messages">
+            <div style="text-align: center; color: var(--text-muted); margin-top: 50px;">
+                Welcome to the start of the <b>#general</b> channel.
+            </div>
+        </div>
+
+        <div id="input-area">
+            <input type="file" id="fileInput" style="display:none">
+            <button class="control-btn" onclick="document.getElementById('fileInput').click()" title="Upload File">📎</button>
+            
+            <input id="msgInput" autocomplete="off" placeholder="Message #general...">
+            
+            <button class="send-btn" onclick="sendMsg()">➤</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const socket = io();
+    const username = "<%= username %>";
+    let localStream;
+    let peers = {}; 
+
+    // --- Sound Engine ---
+    const audioCtx = {
+        message: new Audio('/sounds/message.mp3'),
+        join: new Audio('/sounds/join.mp3')
+    };
+    
+    function playSound(type) {
+        const sound = audioCtx[type];
+        if (sound) {
+            sound.currentTime = 0; 
+            sound.play().catch(e => {}); // Catch autoplay blocks
+        }
+    }
+
+    socket.emit('join', username);
+
+    // --- Admin / System Listeners ---
+    socket.on('msg-deleted', (msgId) => {
+        // Force reload to clear deleted messages for now
+        location.reload();
+    });
+
+    socket.on('user-banned', (bannedId) => {
+        // If this socket receives a ban notification, we could check ID,
+        // but usually the server kills the connection. This handles
+        // live UI updates if needed.
+    });
+
+    socket.on('system-msg', (msg) => {
+        playSound('join');
+        const div = document.createElement('div');
+        div.className = 'system-msg';
+        div.innerText = msg;
+        document.getElementById('messages').appendChild(div);
+    });
+
+    // --- UI Updates (User List) ---
+    socket.on('update-user-list', (users) => {
+        const list = document.getElementById('user-list');
+        list.innerHTML = '';
+        users.forEach(user => {
+            if(user === username) return; 
+            const div = document.createElement('div');
+            div.className = 'user-card';
+            div.innerHTML = `
+                <div class="avatar">${user.charAt(0).toUpperCase()}</div>
+                <div style="font-size: 14px; font-weight: 500; flex: 1;">${user}</div>
+                <div class="status-dot"></div>
+            `;
+            list.appendChild(div);
+        });
+    });
+
+    // --- Chat Logic ---
+    function sendMsg() {
+        const input = document.getElementById('msgInput');
+        if(input.value.trim()) {
+            socket.emit('chat-msg', input.value);
+            input.value = '';
+        }
+    }
+    
+    document.getElementById('msgInput').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') sendMsg();
+    });
+
+    socket.on('chat-msg', (data) => {
+        const msgContainer = document.createElement('div');
+        const isSelf = data.user === username;
+        
+        if (!isSelf) playSound('message');
+
+        msgContainer.className = `msg-container ${isSelf ? 'self-msg' : ''}`;
+        // Ideally, we'd set msgContainer.id here if the server sent the DB ID
+        
+        let content = data.text;
+        // Handle File Links
+        if (data.type === 'file') {
+            content = `<a href="/uploads/${data.text.filename}" target="_blank" style="color: white; text-decoration: none; display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 24px;">📄</span> 
+                        <div>
+                            <div style="font-weight:bold">${data.text.originalName}</div>
+                            <div style="font-size:10px; opacity:0.7">Click to download</div>
+                        </div>
+                       </a>`;
+        }
+
+        msgContainer.innerHTML = `
+            <div class="msg-header">
+                ${!isSelf ? `<span style="font-weight: bold; color: #a0a0b0;">${data.user}</span>` : ''}
+                <span>${data.timestamp}</span>
+            </div>
+            <div class="msg-bubble">${content}</div>
+        `;
+
+        const messages = document.getElementById('messages');
+        messages.appendChild(msgContainer);
+        messages.scrollTop = messages.scrollHeight; 
+    });
+
+    // --- File Upload ---
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+        if(e.target.files.length === 0) return;
+        const file = e.target.files[0];
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {
+            const res = await fetch('/upload', { method: 'POST', body: formData });
+            const data = await res.json();
+            socket.emit('file-share', data);
+        } catch (err) {
+            alert("File upload failed.");
+        }
+    });
+
+    // --- WebRTC Logic (Video/Screen) ---
+    const rtcConfig = { iceServers: [] }; // Local LAN = No STUN needed
+
+    async function startVideo() {
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            addVideo(localStream, true);
+            socket.emit('signal', { type: 'join-video', user: username });
+        } catch(err) { alert("Could not access camera. Make sure you are on HTTPS."); }
+    }
+
+    async function startScreen() {
+        try {
+            localStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+            addVideo(localStream, true);
+            socket.emit('signal', { type: 'join-video', user: username });
+        } catch(err) { console.log("Screen share cancelled"); }
+    }
+
+    function addVideo(stream, isMuted) {
+        const vid = document.createElement('video');
+        vid.srcObject = stream;
+        vid.autoplay = true;
+        if(isMuted) vid.muted = true; 
+        document.getElementById('video-grid').appendChild(vid);
+    }
+
+    socket.on('signal', async (data) => {
+        if (data.user === username) return;
+        
+        try {
+            if (data.type === 'join-video') {
+                playSound('join');
+                const pc = createPeer(data.user);
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                socket.emit('signal', { type: 'offer', sdp: offer, target: data.user, sender: username });
+            }
+            if (data.type === 'offer' && data.target === username) {
+                const pc = createPeer(data.sender);
+                await pc.setRemoteDescription(data.sdp);
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit('signal', { type: 'answer', sdp: answer, target: data.sender, sender: username });
+            }
+            if (data.type === 'answer' && data.target === username) {
+                peers[data.sender].setRemoteDescription(data.sdp);
+            }
+            if (data.type === 'candidate' && data.target === username) {
+                peers[data.sender].addIceCandidate(data.candidate);
+            }
+        } catch (err) { console.error("WebRTC Error:", err); }
+    });
+
+    function createPeer(targetUser) {
+        const pc = new RTCPeerConnection(rtcConfig);
+        peers[targetUser] = pc;
+        
+        if (localStream) {
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+        }
+        
+        pc.onicecandidate = (event) => {
+            if (event.candidate) socket.emit('signal', { type: 'candidate', candidate: event.candidate, target: targetUser, sender: username });
+        };
+        
+        pc.ontrack = (event) => { addVideo(event.streams[0], false); };
+        
+        return pc;
+    }
+</script>
+</body>
+</html>

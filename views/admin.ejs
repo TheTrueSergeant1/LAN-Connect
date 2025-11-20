@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin // LAN-Cord</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #050507;
+            --glass-surface: rgba(20, 20, 25, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --danger: #ff4757;
+            --warning: #ffa502;
+            --success: #2ed573;
+            --text-main: #ffffff;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-dark);
+            background-image: radial-gradient(circle at 50% 50%, rgba(255, 71, 87, 0.15), transparent 50%);
+            color: white;
+            padding: 40px;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 30px;
+        }
+
+        .panel {
+            background: var(--glass-surface);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+        }
+
+        h1 { margin-top: 0; font-weight: 800; letter-spacing: -1px; }
+        h3 { text-transform: uppercase; letter-spacing: 1px; font-size: 12px; color: #aaa; margin-bottom: 20px; }
+
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; color: #aaa; font-size: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--glass-border); }
+        td { padding: 12px 0; font-size: 14px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+
+        .btn {
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 12px;
+            transition: transform 0.2s;
+        }
+        .btn:hover { transform: scale(1.05); }
+        
+        .btn-ban { background: rgba(255, 71, 87, 0.2); color: var(--danger); border: 1px solid rgba(255, 71, 87, 0.3); }
+        .btn-ban:hover { background: var(--danger); color: white; }
+
+        .btn-del { background: rgba(255, 165, 2, 0.2); color: var(--warning); border: 1px solid rgba(255, 165, 2, 0.3); }
+        .btn-del:hover { background: var(--warning); color: black; }
+
+        .tag { padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
+        .tag-admin { background: #3742fa; color: white; }
+        .tag-user { background: #2f3542; color: #aaa; }
+        .tag-banned { background: var(--danger); color: white; }
+
+        .header-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        .back-link { color: white; text-decoration: none; font-weight: 600; opacity: 0.7; }
+        .back-link:hover { opacity: 1; }
+    </style>
+</head>
+<body>
+
+    <div class="header-bar">
+        <h1>Server Command // <span style="color: var(--danger)">ADMIN</span></h1>
+        <a href="/" class="back-link">← Return to Chat</a>
+    </div>
+
+    <div class="container">
+        
+        <div class="panel">
+            <h3>User Database</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Role</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <% users.forEach(user => { %>
+                        <tr>
+                            <td>
+                                <%= user.username %>
+                                <% if(user.username === myUser) { %> <span style="opacity:0.5">(You)</span> <% } %>
+                            </td>
+                            <td>
+                                <% if(user.is_banned) { %>
+                                    <span class="tag tag-banned">BANNED</span>
+                                <% } else if(user.role === 'admin') { %>
+                                    <span class="tag tag-admin">ADMIN</span>
+                                <% } else { %>
+                                    <span class="tag tag-user">USER</span>
+                                <% } %>
+                            </td>
+                            <td>
+                                <% if(user.role !== 'admin' && !user.is_banned) { %>
+                                    <form action="/admin/ban" method="POST">
+                                        <input type="hidden" name="userId" value="<%= user.id %>">
+                                        <button class="btn btn-ban">BAN</button>
+                                    </form>
+                                <% } %>
+                            </td>
+                        </tr>
+                    <% }) %>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="panel">
+            <h3>Recent Transmission Logs</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>User</th>
+                        <th>Content</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <% messages.forEach(msg => { %>
+                        <tr>
+                            <td style="opacity: 0.6; font-size: 12px;"><%= msg.timestamp %></td>
+                            <td style="font-weight: 600; color: #74b9ff"><%= msg.username %></td>
+                            <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                <%= msg.content %>
+                            </td>
+                            <td>
+                                <form action="/admin/delete-msg" method="POST">
+                                    <input type="hidden" name="msgId" value="<%= msg.id %>">
+                                    <button class="btn btn-del">DEL</button>
+                                </form>
+                            </td>
+                        </tr>
+                    <% }) %>
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+
+</body>
+</html>
